@@ -48,6 +48,8 @@ import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.LocalLifecycleOwner
@@ -95,11 +97,15 @@ private fun QrLifeApp() {
     var diedColor by remember { mutableStateOf(Color.Transparent) }
     var background by remember { mutableStateOf<ImageBitmap?>(null) }
     var exportDialog by remember { mutableStateOf(false) }
+    var helpDialog by remember { mutableStateOf(false) }
+    var showSimulation by remember { mutableStateOf(false) }
+    var exportStepsText by remember { mutableStateOf("30") }
     val exportLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.CreateDocument("image/gif")
     ) { uri ->
         if (uri != null && board != null) {
-            val data = board!!.gif(30, 8, aliveColor.toArgb(), deadColor.toArgb())
+            val steps = exportStepsText.toIntOrNull()?.coerceAtLeast(0) ?: 30
+            val data = board!!.gif(steps, 8, aliveColor.toArgb(), deadColor.toArgb())
             context.contentResolver.openOutputStream(uri)?.use { it.write(data) }
         }
     }
@@ -108,7 +114,8 @@ private fun QrLifeApp() {
     ) { uri ->
         if (uri != null && board != null) {
             runCatching {
-                Mp4Exporter.export(context, uri, board!!, 30, 8, aliveColor.toArgb(), deadColor.toArgb())
+                val steps = exportStepsText.toIntOrNull()?.coerceAtLeast(0) ?: 30
+                Mp4Exporter.export(context, uri, board!!, steps, 8, aliveColor.toArgb(), deadColor.toArgb())
             }.onFailure { error = "MP4出力に失敗しました: ${it.message}" }
         }
     }
@@ -162,6 +169,12 @@ private fun QrLifeApp() {
     }
 
     MaterialTheme {
+        if (!showSimulation) {
+            HomeScreen(
+                onStart = { showSimulation = true },
+                onHelp = { helpDialog = true }
+            )
+        } else {
         LazyColumn(
             modifier = Modifier.fillMaxSize().padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp)
@@ -256,19 +269,37 @@ private fun QrLifeApp() {
                             Text("背景画像")
                         }
                         Button(onClick = { exportDialog = true }) { Text("出力") }
+                        OutlinedButton(onClick = { helpDialog = true }) { Text("使い方") }
                         OutlinedButton(onClick = {
-                            (context as? ComponentActivity)?.finishAndRemoveTask()
-                        }) { Text("終了") }
+                            running = false
+                            board?.close()
+                            board = null
+                            background = null
+                            showSimulation = false
+                        }) { Text("起動画面へ") }
                     }
                 }
             }
             item { error?.let { Text(it, color = MaterialTheme.colorScheme.error) } }
         }
+        }
         if (exportDialog) {
             AlertDialog(
                 onDismissRequest = { exportDialog = false },
                 title = { Text("シミュレーション出力") },
-                text = { Text("30ステップをGIFまたはMP4として保存します。") },
+                text = {
+                    Column {
+                        Text("指定したステップ数をGIFまたはMP4として保存します。")
+                        OutlinedTextField(
+                            value = exportStepsText,
+                            onValueChange = { value ->
+                                if (value.all(Char::isDigit)) exportStepsText = value
+                            },
+                            label = { Text("出力ステップ数") },
+                            singleLine = true
+                        )
+                    }
+                },
                 confirmButton = {
                     TextButton(onClick = {
                         exportDialog = false
@@ -286,8 +317,45 @@ private fun QrLifeApp() {
                 }
             )
         }
+        if (helpDialog) {
+            AlertDialog(
+                onDismissRequest = { helpDialog = false },
+                title = { Text("使い方") },
+                text = {
+                    Text(
+                        "1. 起動画面で「シミュレーション開始」を押します。\n" +
+                            "2. カメラにQRコードを映すか、画像ファイルを選びます。\n" +
+                            "3. 再生・一時停止・リセット・シークで動かします。\n" +
+                            "4. 速度、盤面サイズ、色、背景画像を変更できます。\n" +
+                            "5. 出力ではステップ数を指定してGIFまたはMP4を保存できます。"
+                    )
+                },
+                confirmButton = {
+                    TextButton(onClick = { helpDialog = false }) { Text("閉じる") }
+                }
+            )
+        }
     }
 
+}
+
+@Composable
+private fun HomeScreen(onStart: () -> Unit, onHelp: () -> Unit) {
+    Column(
+        modifier = Modifier.fillMaxSize().padding(24.dp),
+        verticalArrangement = Arrangement.Center
+    ) {
+        Text("QR Life", style = MaterialTheme.typography.headlineLarge)
+        Spacer(Modifier.height(12.dp))
+        Text("QRコードを初期配置としてライフゲームを実行します。")
+        Spacer(Modifier.height(24.dp))
+        Button(onClick = onStart, modifier = Modifier.fillMaxWidth()) {
+            Text("シミュレーション開始")
+        }
+        OutlinedButton(onClick = onHelp, modifier = Modifier.fillMaxWidth()) {
+            Text("使い方")
+        }
+    }
 }
 
 @Composable
@@ -396,7 +464,19 @@ private fun BoardView(
     background: ImageBitmap?
 ) {
     Canvas(Modifier.fillMaxWidth().aspectRatio(1f)) {
-        background?.let { drawImage(it) }
+        background?.let { image ->
+            val scale = maxOf(size.width / image.width, size.height / image.height)
+            val drawWidth = (image.width * scale).toInt()
+            val drawHeight = (image.height * scale).toInt()
+            drawImage(
+                image,
+                dstOffset = IntOffset(
+                    ((size.width - drawWidth) / 2f).toInt(),
+                    ((size.height - drawHeight) / 2f).toInt()
+                ),
+                dstSize = IntSize(drawWidth, drawHeight)
+            )
+        }
         drawRect(deadColor)
         val cellWidth = size.width / board.width
         val cellHeight = size.height / board.height
