@@ -208,7 +208,7 @@ private fun QrLifeApp() {
                         BoardView(current, previousCells, aliveColor, deadColor, bornColor, diedColor, background)
                     }
                     Spacer(Modifier.height(8.dp))
-                    Text("Rustで実行中 / Step ${current.generation} / 盤面 ${current.width}×${current.height}")
+                    Text("実行中 / Step ${current.generation} / 盤面 ${current.width}×${current.height}")
                     Text("速度: ${speed.toInt()} ms")
                     Slider(value = speed, onValueChange = { speed = it }, valueRange = 30f..1000f)
                     Text("シーク: ${seek.toInt()}")
