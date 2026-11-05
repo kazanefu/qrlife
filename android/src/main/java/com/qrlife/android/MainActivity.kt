@@ -1,0 +1,243 @@
+package com.qrlife.android
+
+import android.Manifest
+import android.content.pm.PackageManager
+import android.net.Uri
+import android.os.Bundle
+import androidx.activity.ComponentActivity
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.compose.setContent
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.aspectRatio
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.material3.Button
+import androidx.compose.material3.LinearProgressIndicator
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.Text
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.unit.dp
+import androidx.core.content.ContextCompat
+import androidx.lifecycle.compose.LocalLifecycleOwner
+import androidx.camera.core.CameraSelector
+import androidx.camera.core.ImageAnalysis
+import androidx.camera.core.Preview
+import androidx.camera.lifecycle.ProcessCameraProvider
+import androidx.camera.view.PreviewView
+import androidx.compose.ui.viewinterop.AndroidView
+import com.google.mlkit.vision.barcode.BarcodeScanning
+import com.google.mlkit.vision.barcode.common.Barcode
+import com.google.mlkit.vision.common.InputImage
+import java.util.concurrent.Executors
+import java.util.concurrent.atomic.AtomicBoolean
+
+class MainActivity : ComponentActivity() {
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        setContent { QrLifeApp() }
+    }
+}
+
+@Composable
+private fun QrLifeApp() {
+    val context = LocalContext.current
+    var cameraAllowed by remember {
+        mutableStateOf(
+            ContextCompat.checkSelfPermission(context, Manifest.permission.CAMERA) ==
+                PackageManager.PERMISSION_GRANTED
+        )
+    }
+    val permissionLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { cameraAllowed = it }
+    var board by remember { mutableStateOf<RustLife?>(null) }
+    var running by remember { mutableStateOf(false) }
+    var error by remember { mutableStateOf<String?>(null) }
+    var revision by remember { mutableStateOf(0) }
+
+    LaunchedEffect(running, board) {
+        while (running && board != null) {
+            kotlinx.coroutines.delay(120)
+            board?.step()
+            revision++
+        }
+    }
+
+    val loadPayload: (String) -> Unit = { payload ->
+        board?.close()
+        board = RustLife.create(payload)
+        revision++
+        running = false
+        error = null
+    }
+    val imagePicker = rememberLauncherForActivityResult(
+        ActivityResultContracts.GetContent()
+    ) { uri: Uri? ->
+        if (uri != null) {
+            BarcodeScanning.getClient().process(InputImage.fromFilePath(context, uri))
+                .addOnSuccessListener { codes ->
+                    codes.firstOrNull { it.format == Barcode.FORMAT_QR_CODE }
+                        ?.rawValue?.let(loadPayload)
+                        ?: run { error = "選択した画像からQRコードを検出できませんでした" }
+                }
+                .addOnFailureListener { error = "画像を解析できませんでした" }
+        }
+    }
+
+    MaterialTheme {
+        LazyColumn(
+            modifier = Modifier.fillMaxSize().padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            item {
+                Text("QR Life", style = MaterialTheme.typography.headlineMedium)
+                Text("QRコードを初期配置としてライフゲームを実行します。")
+            }
+            item {
+                if (!cameraAllowed) {
+                    Button(onClick = { permissionLauncher.launch(Manifest.permission.CAMERA) }) {
+                        Text("カメラを許可")
+                    }
+                } else {
+                    CameraScanner(onPayload = loadPayload, onError = { error = it })
+                }
+            }
+            item {
+                Button(onClick = { loadPayload("QR Life") }) {
+                    Text("サンプル盤面を読み込む")
+                }
+                OutlinedButton(onClick = { imagePicker.launch("image/*") }) {
+                    Text("画像から読み込む")
+                }
+            }
+            item {
+                board?.let { current ->
+                    key(revision) {
+                        BoardView(current)
+                    }
+                    Spacer(Modifier.height(8.dp))
+                    Text("Rustで実行中 / 盤面 ${current.width}×${current.height}")
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Button(onClick = { running = !running }) {
+                            Text(if (running) "一時停止" else "再生")
+                        }
+                        OutlinedButton(onClick = {
+                            board = current.reset()
+                            running = false
+                        }) {
+                            Text("リセット")
+                        }
+                    }
+                }
+            }
+            item { error?.let { Text(it, color = MaterialTheme.colorScheme.error) } }
+        }
+    }
+}
+
+@Composable
+private fun CameraScanner(onPayload: (String) -> Unit, onError: (String) -> Unit) {
+    val context = LocalContext.current
+    val lifecycleOwner = LocalLifecycleOwner.current
+    val executor = remember { Executors.newSingleThreadExecutor() }
+    val scanner = remember { BarcodeScanning.getClient() }
+    val processing = remember { AtomicBoolean(false) }
+
+    DisposableEffect(Unit) {
+        onDispose {
+            scanner.close()
+            executor.shutdown()
+        }
+    }
+    Box {
+        AndroidView(
+            modifier = Modifier.fillMaxWidth().height(300.dp),
+            factory = { viewContext ->
+                val previewView = PreviewView(viewContext)
+                val providerFuture = ProcessCameraProvider.getInstance(viewContext)
+                providerFuture.addListener({
+                    val provider = providerFuture.get()
+                    val preview = Preview.Builder().build().apply {
+                        setSurfaceProvider(previewView.surfaceProvider)
+                    }
+                    val analysis = ImageAnalysis.Builder()
+                        .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
+                        .build()
+                    analysis.setAnalyzer(executor) { proxy ->
+                        if (!processing.compareAndSet(false, true)) {
+                            proxy.close()
+                            return@setAnalyzer
+                        }
+                        val image = proxy.image
+                        if (image == null) {
+                            processing.set(false)
+                            proxy.close()
+                            return@setAnalyzer
+                        }
+                        scanner.process(InputImage.fromMediaImage(image, proxy.imageInfo.rotationDegrees))
+                            .addOnSuccessListener { codes ->
+                                codes.firstOrNull { it.format == Barcode.FORMAT_QR_CODE }
+                                    ?.rawValue?.let(onPayload)
+                            }
+                            .addOnFailureListener {
+                                onError("QRコードを読み取れませんでした")
+                            }
+                            .addOnCompleteListener {
+                                processing.set(false)
+                                proxy.close()
+                            }
+                    }
+                    provider.unbindAll()
+                    provider.bindToLifecycle(
+                        lifecycleOwner,
+                        CameraSelector.DEFAULT_BACK_CAMERA,
+                        preview,
+                        analysis
+                    )
+                }, ContextCompat.getMainExecutor(context))
+                previewView
+            }
+        )
+        Text("QRコードをカメラに向けてください", modifier = Modifier.padding(12.dp))
+    }
+}
+
+@Composable
+private fun BoardView(board: RustLife) {
+    Canvas(Modifier.fillMaxWidth().aspectRatio(1f)) {
+        val cellWidth = size.width / board.width
+        val cellHeight = size.height / board.height
+        board.cells.forEachIndexed { index, alive ->
+            if (alive) {
+                val x = index % board.width
+                val y = index / board.width
+                drawRect(
+                    color = Color(0xFF2E7D32),
+                    topLeft = Offset(x * cellWidth, y * cellHeight),
+                    size = androidx.compose.ui.geometry.Size(cellWidth, cellHeight)
+                )
+            }
+        }
+    }
+}

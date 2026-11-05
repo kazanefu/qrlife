@@ -5,6 +5,10 @@ edition = "2021"
 description = "Detect a QR code from an image and run Conway's Game of Life"
 license = "MIT"
 
+[workspace]
+members = ["android/native"]
+resolver = "2"
+
 [dependencies]
 image = { version = "0.25", default-features = false, features = ["png", "jpeg", "gif", "bmp", "webp"] }
 rqrr = "0.8"

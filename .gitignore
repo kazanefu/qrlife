@@ -1,1 +1,25 @@
-target/
+# Rust
+/target/
+**/target/
+
+# Android/Gradle
+.gradle/
+**/.gradle/
+local.properties
+android/build/
+android/.cxx/
+android/src/main/jniLibs/
+
+# IDE
+.idea/
+*.iml
+*.ipr
+*.iws
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Generated/log files
+*.log
+*.hprof
