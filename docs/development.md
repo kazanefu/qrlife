@@ -59,3 +59,14 @@ $env:ANDROID_HOME="$env:LOCALAPPDATA\Android\Sdk"
 2. `cargo test --workspace`を実行する。
 3. `.\scripts\build-android.ps1`でAPKを再生成する。
 4. QR画像入力では、Step 0がQRの黒白モジュール行列と一致することを確認する。
+
+## 実装済みの操作
+
+- カメラ / 画像ファイルからQRモジュール行列を読み込み
+- 再生 / 一時停止 / リセット / 世代シーク
+- シミュレーション速度調整
+- QRサイズを下限とした盤面拡張
+- 生存、死滅、誕生、死亡セルのRGBA設定
+- 背景画像の設定
+- GIF / MP4出力
+- 終了

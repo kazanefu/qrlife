@@ -4,6 +4,9 @@ import android.Manifest
 import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Bundle
+import android.graphics.BitmapFactory
+import android.graphics.Bitmap
+import android.provider.MediaStore
 import androidx.camera.core.ImageProxy
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -26,6 +29,10 @@ import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
+import androidx.compose.material3.Slider
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.TextButton
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -37,6 +44,9 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
@@ -74,11 +84,50 @@ private fun QrLifeApp() {
     var running by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
     var revision by remember { mutableStateOf(0) }
+    var previousCells by remember { mutableStateOf<List<Boolean>>(emptyList()) }
+    var speed by remember { mutableStateOf(120f) }
+    var seek by remember { mutableStateOf(0f) }
+    var requestedWidth by remember { mutableStateOf(0f) }
+    var requestedHeight by remember { mutableStateOf(0f) }
+    var aliveColor by remember { mutableStateOf(Color(0xFF00C853)) }
+    var deadColor by remember { mutableStateOf(Color.Black) }
+    var bornColor by remember { mutableStateOf(Color.Transparent) }
+    var diedColor by remember { mutableStateOf(Color.Transparent) }
+    var background by remember { mutableStateOf<ImageBitmap?>(null) }
+    var exportDialog by remember { mutableStateOf(false) }
+    val exportLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.CreateDocument("image/gif")
+    ) { uri ->
+        if (uri != null && board != null) {
+            val data = board!!.gif(30, 8, aliveColor.toArgb(), deadColor.toArgb())
+            context.contentResolver.openOutputStream(uri)?.use { it.write(data) }
+        }
+    }
+    val mp4Launcher = rememberLauncherForActivityResult(
+        ActivityResultContracts.CreateDocument("video/mp4")
+    ) { uri ->
+        if (uri != null && board != null) {
+            runCatching {
+                Mp4Exporter.export(context, uri, board!!, 30, 8, aliveColor.toArgb(), deadColor.toArgb())
+            }.onFailure { error = "MP4出力に失敗しました: ${it.message}" }
+        }
+    }
+    val backgroundPicker = rememberLauncherForActivityResult(
+        ActivityResultContracts.GetContent()
+    ) { uri ->
+        if (uri != null) {
+            context.contentResolver.openInputStream(uri)?.use {
+                background = BitmapFactory.decodeStream(it)?.asImageBitmap()
+            }
+        }
+    }
 
-    LaunchedEffect(running, board) {
+    LaunchedEffect(running, speed, board) {
         while (running && board != null) {
-            kotlinx.coroutines.delay(120)
+            kotlinx.coroutines.delay(speed.toLong())
+            previousCells = board?.cells ?: emptyList()
             board?.step()
+            seek = board?.generation?.toFloat() ?: 0f
             revision++
         }
     }
@@ -86,6 +135,7 @@ private fun QrLifeApp() {
     val loadImage: (ByteArray) -> Unit = { bytes ->
         board?.close()
         board = RustLife.createFromImage(bytes)
+        previousCells = board?.cells ?: emptyList()
         revision++
         running = false
         error = if (board == null) "画像からQRコードを検出できませんでした" else null
@@ -93,6 +143,7 @@ private fun QrLifeApp() {
     val loadGray: (Int, Int, ByteArray) -> Unit = { width, height, bytes ->
         board?.close()
         board = RustLife.createFromGray(width, height, bytes)
+        previousCells = board?.cells ?: emptyList()
         revision++
         running = false
         error = if (board == null) "カメラ画像からQRコードを検出できませんでした" else null
@@ -141,25 +192,114 @@ private fun QrLifeApp() {
             item {
                 board?.let { current ->
                     key(revision) {
-                        BoardView(current)
+                        BoardView(current, previousCells, aliveColor, deadColor, bornColor, diedColor, background)
                     }
                     Spacer(Modifier.height(8.dp))
-                    Text("Rustで実行中 / 盤面 ${current.width}×${current.height}")
+                    Text("Rustで実行中 / Step ${current.generation} / 盤面 ${current.width}×${current.height}")
+                    Text("速度: ${speed.toInt()} ms")
+                    Slider(value = speed, onValueChange = { speed = it }, valueRange = 30f..1000f)
+                    Text("シーク: ${seek.toInt()}")
+                    Slider(
+                        value = seek,
+                        onValueChange = {
+                            seek = it
+                            previousCells = current.cells
+                            current.seek(it.toInt())
+                            revision++
+                        },
+                        valueRange = 0f..300f
+                    )
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         Button(onClick = { running = !running }) {
                             Text(if (running) "一時停止" else "再生")
                         }
                         OutlinedButton(onClick = {
-                            board = current.reset()
+                            current.resetInPlace()
+                            previousCells = current.cells
+                            seek = 0f
+                            revision++
+                            board = current
                             running = false
                         }) {
                             Text("リセット")
                         }
                     }
+                    Text("盤面サイズ")
+                    Row {
+                        Slider(
+                            value = requestedWidth.coerceAtLeast(current.width.toFloat()),
+                            onValueChange = { requestedWidth = it },
+                            valueRange = current.width.toFloat()..(current.width + 100).toFloat(),
+                            modifier = Modifier.weight(1f)
+                        )
+                        Slider(
+                            value = requestedHeight.coerceAtLeast(current.height.toFloat()),
+                            onValueChange = { requestedHeight = it },
+                            valueRange = current.height.toFloat()..(current.height + 100).toFloat(),
+                            modifier = Modifier.weight(1f)
+                        )
+                    }
+                    OutlinedButton(onClick = {
+                        val width = requestedWidth.toInt().coerceAtLeast(current.width)
+                        val height = requestedHeight.toInt().coerceAtLeast(current.height)
+                        if (current.resize(width, height)) {
+                            previousCells = current.cells
+                            revision++
+                        }
+                    }) { Text("サイズを適用") }
+                    ColorControl("生存セル", aliveColor) { aliveColor = it }
+                    ColorControl("死滅セル", deadColor) { deadColor = it }
+                    ColorControl("誕生セル", bornColor) { bornColor = it }
+                    ColorControl("死亡セル", diedColor) { diedColor = it }
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        OutlinedButton(onClick = { backgroundPicker.launch("image/*") }) {
+                            Text("背景画像")
+                        }
+                        Button(onClick = { exportDialog = true }) { Text("出力") }
+                        OutlinedButton(onClick = {
+                            (context as? ComponentActivity)?.finishAndRemoveTask()
+                        }) { Text("終了") }
+                    }
                 }
             }
             item { error?.let { Text(it, color = MaterialTheme.colorScheme.error) } }
         }
+        if (exportDialog) {
+            AlertDialog(
+                onDismissRequest = { exportDialog = false },
+                title = { Text("シミュレーション出力") },
+                text = { Text("30ステップをGIFまたはMP4として保存します。") },
+                confirmButton = {
+                    TextButton(onClick = {
+                        exportDialog = false
+                        exportLauncher.launch("qrlife.gif")
+                    }) { Text("GIF") }
+                },
+                dismissButton = {
+                    Row {
+                        TextButton(onClick = {
+                            exportDialog = false
+                            mp4Launcher.launch("qrlife.mp4")
+                        }) { Text("MP4") }
+                        TextButton(onClick = { exportDialog = false }) { Text("キャンセル") }
+                    }
+                }
+            )
+        }
+    }
+
+}
+
+@Composable
+private fun ColorControl(label: String, color: Color, onChange: (Color) -> Unit) {
+    Text("$label: #${color.toArgb().toUInt().toString(16).padStart(8, '0')}")
+    listOf(
+        color.red to { value: Float -> onChange(color.copy(red = value)) },
+        color.green to { value: Float -> onChange(color.copy(green = value)) },
+        color.blue to { value: Float -> onChange(color.copy(blue = value)) },
+        color.alpha to { value: Float -> onChange(color.copy(alpha = value)) }
+    ).forEach { (value, update) ->
+        Slider(value = value, onValueChange = update, valueRange = 0f..1f)
     }
 }
 
@@ -246,8 +386,18 @@ private fun packedLuma(image: android.media.Image, proxy: ImageProxy): ByteArray
 }
 
 @Composable
-private fun BoardView(board: RustLife) {
+private fun BoardView(
+    board: RustLife,
+    previousCells: List<Boolean>,
+    aliveColor: Color,
+    deadColor: Color,
+    bornColor: Color,
+    diedColor: Color,
+    background: ImageBitmap?
+) {
     Canvas(Modifier.fillMaxWidth().aspectRatio(1f)) {
+        background?.let { drawImage(it) }
+        drawRect(deadColor)
         val cellWidth = size.width / board.width
         val cellHeight = size.height / board.height
         board.cells.forEachIndexed { index, alive ->
@@ -255,7 +405,15 @@ private fun BoardView(board: RustLife) {
                 val x = index % board.width
                 val y = index / board.width
                 drawRect(
-                    color = Color(0xFF2E7D32),
+                    color = if (index < previousCells.size && !previousCells[index]) bornColor else aliveColor,
+                    topLeft = Offset(x * cellWidth, y * cellHeight),
+                    size = androidx.compose.ui.geometry.Size(cellWidth, cellHeight)
+                )
+            } else if (index < previousCells.size && previousCells[index]) {
+                val x = index % board.width
+                val y = index / board.width
+                drawRect(
+                    color = diedColor,
                     topLeft = Offset(x * cellWidth, y * cellHeight),
                     size = androidx.compose.ui.geometry.Size(cellWidth, cellHeight)
                 )

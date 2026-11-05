@@ -3,6 +3,10 @@ pub struct GameOfLife {
     width: usize,
     height: usize,
     cells: Vec<bool>,
+    initial: Vec<bool>,
+    generation: usize,
+    min_width: usize,
+    min_height: usize,
 }
 
 impl GameOfLife {
@@ -17,6 +21,10 @@ impl GameOfLife {
             width,
             height,
             cells: vec![false; size],
+            initial: vec![false; size],
+            generation: 0,
+            min_width: width,
+            min_height: height,
         })
     }
 
@@ -27,7 +35,11 @@ impl GameOfLife {
         Ok(Self {
             width,
             height,
+            initial: cells.clone(),
             cells,
+            generation: 0,
+            min_width: width,
+            min_height: height,
         })
     }
 
@@ -37,6 +49,10 @@ impl GameOfLife {
 
     pub fn height(&self) -> usize {
         self.height
+    }
+
+    pub fn generation(&self) -> usize {
+        self.generation
     }
 
     pub fn get(&self, x: usize, y: usize) -> bool {
@@ -62,6 +78,42 @@ impl GameOfLife {
             }
         }
         self.cells = next;
+        self.generation += 1;
+    }
+
+    pub fn reset(&mut self) {
+        self.cells.clone_from(&self.initial);
+        self.generation = 0;
+    }
+
+    pub fn seek(&mut self, generation: usize) {
+        self.reset();
+        for _ in 0..generation {
+            self.step();
+        }
+    }
+
+    pub fn resize(&mut self, width: usize, height: usize) -> Result<(), String> {
+        if width < self.min_width || height < self.min_height {
+            return Err("盤面はQRコードより小さくできません".into());
+        }
+        let offset_x = (width - self.width) / 2;
+        let offset_y = (height - self.height) / 2;
+        let mut next = vec![false; width * height];
+        let mut next_initial = vec![false; width * height];
+        for y in 0..self.height {
+            for x in 0..self.width {
+                let target = (y + offset_y) * width + x + offset_x;
+                next[target] = self.get(x, y);
+                next_initial[target] = self.initial[y * self.width + x];
+            }
+        }
+        self.width = width;
+        self.height = height;
+        self.cells = next;
+        self.initial = next_initial;
+        self.generation = 0;
+        Ok(())
     }
 
     pub fn render(&self) -> String {
@@ -111,5 +163,32 @@ mod tests {
         game.step();
         assert!(game.get(1, 2) && game.get(2, 2) && game.get(3, 2));
         assert_eq!(game.alive_count(), 3);
+    }
+
+    #[test]
+    fn reset_and_seek_are_deterministic() {
+        let mut cells = vec![false; 25];
+        cells[2 * 5 + 2] = true;
+        cells[1 * 5 + 2] = true;
+        cells[3 * 5 + 2] = true;
+        let mut game = GameOfLife::from_cells(5, 5, cells).unwrap();
+        game.step();
+        assert_eq!(game.generation(), 1);
+        game.reset();
+        assert_eq!(game.generation(), 0);
+        game.seek(1);
+        assert_eq!(game.generation(), 1);
+        assert!(game.get(1, 2) && game.get(2, 2) && game.get(3, 2));
+    }
+
+    #[test]
+    fn resize_preserves_qr_minimum_and_initial_state() {
+        let mut cells = vec![false; 9];
+        cells[4] = true;
+        let mut game = GameOfLife::from_cells(3, 3, cells).unwrap();
+        assert!(game.resize(5, 5).is_ok());
+        assert!(game.resize(2, 2).is_err());
+        game.reset();
+        assert!(game.get(2, 2));
     }
 }

@@ -6,12 +6,23 @@ class RustLife private constructor(
 ) {
     val width: Int get() = nativeWidth(handle)
     val height: Int get() = nativeHeight(handle)
+    val generation: Int get() = nativeGeneration(handle)
     val cells: List<Boolean>
         get() = nativeState(handle).map { it == '1' }
 
     fun step() {
         nativeStep(handle)
     }
+
+    fun resetInPlace() = nativeReset(handle)
+
+    fun resize(width: Int, height: Int): Boolean =
+        nativeResize(handle, width, height) == 0
+
+    fun gif(steps: Int, cellSize: Int, alive: Int, dead: Int): ByteArray =
+        nativeGif(handle, steps, cellSize, alive, dead)
+
+    fun seek(generation: Int) = nativeSeek(handle, generation)
 
     fun reset(): RustLife? {
         close()
@@ -55,9 +66,20 @@ class RustLife private constructor(
             bytes: ByteArray
         ): Long
         @JvmStatic private external fun nativeStep(handle: Long)
+        @JvmStatic private external fun nativeReset(handle: Long)
+        @JvmStatic private external fun nativeSeek(handle: Long, generation: Int)
+        @JvmStatic private external fun nativeResize(handle: Long, width: Int, height: Int): Int
         @JvmStatic private external fun nativeState(handle: Long): String
         @JvmStatic private external fun nativeWidth(handle: Long): Int
         @JvmStatic private external fun nativeHeight(handle: Long): Int
+        @JvmStatic private external fun nativeGeneration(handle: Long): Int
+        @JvmStatic private external fun nativeGif(
+            handle: Long,
+            steps: Int,
+            cellSize: Int,
+            alive: Int,
+            dead: Int
+        ): ByteArray
         @JvmStatic private external fun nativeDestroy(handle: Long)
     }
 }
