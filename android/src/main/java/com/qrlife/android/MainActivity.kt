@@ -4,6 +4,7 @@ import android.Manifest
 import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Bundle
+import androidx.camera.core.ImageProxy
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
@@ -46,9 +47,6 @@ import androidx.camera.core.Preview
 import androidx.camera.lifecycle.ProcessCameraProvider
 import androidx.camera.view.PreviewView
 import androidx.compose.ui.viewinterop.AndroidView
-import com.google.mlkit.vision.barcode.BarcodeScanning
-import com.google.mlkit.vision.barcode.common.Barcode
-import com.google.mlkit.vision.common.InputImage
 import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicBoolean
 
@@ -57,6 +55,7 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         setContent { QrLifeApp() }
     }
+
 }
 
 @Composable
@@ -84,24 +83,30 @@ private fun QrLifeApp() {
         }
     }
 
-    val loadPayload: (String) -> Unit = { payload ->
+    val loadImage: (ByteArray) -> Unit = { bytes ->
         board?.close()
-        board = RustLife.create(payload)
+        board = RustLife.createFromImage(bytes)
         revision++
         running = false
-        error = null
+        error = if (board == null) "画像からQRコードを検出できませんでした" else null
+    }
+    val loadGray: (Int, Int, ByteArray) -> Unit = { width, height, bytes ->
+        board?.close()
+        board = RustLife.createFromGray(width, height, bytes)
+        revision++
+        running = false
+        error = if (board == null) "カメラ画像からQRコードを検出できませんでした" else null
     }
     val imagePicker = rememberLauncherForActivityResult(
         ActivityResultContracts.GetContent()
     ) { uri: Uri? ->
         if (uri != null) {
-            BarcodeScanning.getClient().process(InputImage.fromFilePath(context, uri))
-                .addOnSuccessListener { codes ->
-                    codes.firstOrNull { it.format == Barcode.FORMAT_QR_CODE }
-                        ?.rawValue?.let(loadPayload)
-                        ?: run { error = "選択した画像からQRコードを検出できませんでした" }
-                }
-                .addOnFailureListener { error = "画像を解析できませんでした" }
+            val bytes = context.contentResolver.openInputStream(uri)?.use { it.readBytes() }
+            if (bytes == null) {
+                error = "画像を読み込めませんでした"
+            } else {
+                loadImage(bytes)
+            }
         }
     }
 
@@ -120,13 +125,13 @@ private fun QrLifeApp() {
                         Text("カメラを許可")
                     }
                 } else {
-                    CameraScanner(onPayload = loadPayload, onError = { error = it })
+                    CameraScanner(
+                        onImage = { bytes, width, height -> loadGray(width, height, bytes) },
+                        onError = { error = it }
+                    )
                 }
             }
             item {
-                Button(onClick = { loadPayload("QR Life") }) {
-                    Text("サンプル盤面を読み込む")
-                }
                 OutlinedButton(onClick = { imagePicker.launch("image/*") }) {
                     Text("画像から読み込む")
                 }
@@ -157,16 +162,17 @@ private fun QrLifeApp() {
 }
 
 @Composable
-private fun CameraScanner(onPayload: (String) -> Unit, onError: (String) -> Unit) {
+private fun CameraScanner(
+    onImage: (ByteArray, Int, Int) -> Unit,
+    onError: (String) -> Unit
+) {
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
     val executor = remember { Executors.newSingleThreadExecutor() }
-    val scanner = remember { BarcodeScanning.getClient() }
     val processing = remember { AtomicBoolean(false) }
 
     DisposableEffect(Unit) {
         onDispose {
-            scanner.close()
             executor.shutdown()
         }
     }
@@ -195,18 +201,17 @@ private fun CameraScanner(onPayload: (String) -> Unit, onError: (String) -> Unit
                             proxy.close()
                             return@setAnalyzer
                         }
-                        scanner.process(InputImage.fromMediaImage(image, proxy.imageInfo.rotationDegrees))
-                            .addOnSuccessListener { codes ->
-                                codes.firstOrNull { it.format == Barcode.FORMAT_QR_CODE }
-                                    ?.rawValue?.let(onPayload)
+                        try {
+                            val bytes = packedLuma(image, proxy)
+                            ContextCompat.getMainExecutor(context).execute {
+                                onImage(bytes, proxy.width, proxy.height)
                             }
-                            .addOnFailureListener {
-                                onError("QRコードを読み取れませんでした")
-                            }
-                            .addOnCompleteListener {
-                                processing.set(false)
-                                proxy.close()
-                            }
+                        } catch (_: RuntimeException) {
+                            onError("カメラ画像を読み取れませんでした")
+                        } finally {
+                            processing.set(false)
+                            proxy.close()
+                        }
                     }
                     provider.unbindAll()
                     provider.bindToLifecycle(
@@ -221,6 +226,21 @@ private fun CameraScanner(onPayload: (String) -> Unit, onError: (String) -> Unit
         )
         Text("QRコードをカメラに向けてください", modifier = Modifier.padding(12.dp))
     }
+}
+
+private fun packedLuma(image: android.media.Image, proxy: ImageProxy): ByteArray {
+    val plane = image.planes[0]
+    val source = plane.buffer
+    val width = proxy.width
+    val height = proxy.height
+    val result = ByteArray(width * height)
+    for (y in 0 until height) {
+        for (x in 0 until width) {
+            result[y * width + x] =
+                source.get(y * plane.rowStride + x * plane.pixelStride)
+        }
+    }
+    return result
 }
 
 @Composable

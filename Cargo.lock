@@ -334,6 +334,7 @@ dependencies = [
 name = "qrlife-android"
 version = "0.1.0"
 dependencies = [
+ "image",
  "jni",
  "qrlife",
 ]

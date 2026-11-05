@@ -3,7 +3,7 @@ use jni::{
     sys::{jint, jlong, jstring},
     JNIEnv,
 };
-use qrlife::life::GameOfLife;
+use qrlife::{life::GameOfLife, qr::DecodedQr};
 use std::ptr;
 
 fn board_from_handle<'a>(handle: jlong) -> Option<&'a mut GameOfLife> {
@@ -12,6 +12,12 @@ fn board_from_handle<'a>(handle: jlong) -> Option<&'a mut GameOfLife> {
     } else {
         Some(unsafe { &mut *(handle as *mut GameOfLife) })
     }
+}
+
+fn board_from_decoded(decoded: DecodedQr) -> jlong {
+    GameOfLife::from_cells(decoded.width, decoded.height, decoded.cells)
+        .map(|board| Box::into_raw(Box::new(board)) as jlong)
+        .unwrap_or(0)
 }
 
 #[no_mangle]
@@ -34,6 +40,48 @@ pub extern "system" fn Java_com_qrlife_android_RustLife_nativeCreate(
         .collect::<Vec<_>>();
     match GameOfLife::from_cells(8, bytes.len(), cells) {
         Ok(board) => Box::into_raw(Box::new(board)) as jlong,
+        Err(_) => 0,
+    }
+}
+
+#[no_mangle]
+pub extern "system" fn Java_com_qrlife_android_RustLife_nativeCreateFromImage(
+    mut env: JNIEnv,
+    _class: JClass,
+    bytes: jni::objects::JByteArray,
+) -> jlong {
+    let bytes = match env.convert_byte_array(&bytes) {
+        Ok(bytes) => bytes,
+        Err(_) => return 0,
+    };
+    let image = match image::load_from_memory(&bytes) {
+        Ok(image) => image.to_luma8(),
+        Err(_) => return 0,
+    };
+    match qrlife::qr::decode_gray_image(&image) {
+        Ok(decoded) => board_from_decoded(decoded),
+        Err(_) => 0,
+    }
+}
+
+#[no_mangle]
+pub extern "system" fn Java_com_qrlife_android_RustLife_nativeCreateFromGray(
+    mut env: JNIEnv,
+    _class: JClass,
+    width: jint,
+    height: jint,
+    bytes: jni::objects::JByteArray,
+) -> jlong {
+    let bytes = match env.convert_byte_array(&bytes) {
+        Ok(bytes) => bytes,
+        Err(_) => return 0,
+    };
+    let image = match image::GrayImage::from_raw(width as u32, height as u32, bytes) {
+        Some(image) => image,
+        None => return 0,
+    };
+    match qrlife::qr::decode_gray_image(&image) {
+        Ok(decoded) => board_from_decoded(decoded),
         Err(_) => 0,
     }
 }

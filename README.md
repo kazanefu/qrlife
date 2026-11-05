@@ -26,7 +26,7 @@ cargo run -- path/to/qr.png --steps 10
 .\scripts\build-android.ps1
 ```
 
-Android版のQR入力はML Kitが返す復号文字列をRustへ渡します。CLIのRust実装はそのまま残してあり、画像から検出したQRモジュール行列を初期配置にする従来仕様も変わりません。
+Android版のQR入力も画像画素をRustの`rqrr`へ渡し、検出したQRモジュール行列を初期配置にします。CLIのRust実装はそのまま残してあります。
 
 `cargo ndk`が生成するABI別ライブラリは`android/src/main/jniLibs`へ配置されます。接続デバイスがある場合は、ビルド後にAndroid Studioまたは`adb install android/build/outputs/apk/debug/android-debug.apk`で検証できます。
 
