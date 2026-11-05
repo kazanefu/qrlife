@@ -18,7 +18,7 @@ cargo run -- path/to/qr.png --steps 10
 
 ## Androidアプリ
 
-`android/` にCameraX + ML Kitのカメラ/画像入力と、Rust JNIライブラリによるライフゲーム実行を組み合わせたAndroidアプリを追加しています。Kotlin側はAndroidライフサイクル、CameraX/ML Kit、Composeの画面シェルを担当し、セル状態と世代更新はRust側で実行します。
+`android/` にCameraXのカメラ/画像入力と、Rust JNIライブラリによるQR検出・ライフゲーム実行を組み合わせたAndroidアプリを追加しています。Kotlin側はAndroidライフサイクル、CameraX、Composeの画面シェルを担当し、QR検出・セル状態・世代更新はRust側で実行します。
 
 必要な環境はJDK 17、Android SDK Platform 35、Build Tools 35、NDK 27.2.12479018、Rust stable、`cargo-ndk`です。Android Studioでプロジェクトルートを開くか、SDKとJDKを設定した上でプロジェクトルートから次を実行します。
 

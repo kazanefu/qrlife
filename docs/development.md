@@ -4,7 +4,7 @@
 
 - ルートの`qrlife`: CLIと共有Rustコア
 - `android/native`: Android向けJNIライブラリ。ライフゲームの状態更新はRustで行う
-- `android`: CameraX、ML Kit、Compose、JNIのAndroidアプリ層
+- `android`: CameraX、Compose、JNIのAndroidアプリ層
 - `scripts/build-android.ps1`: Android用Rustライブラリ生成とDebug APKビルド
 
 CLIは次で実行します。
