@@ -124,11 +124,13 @@ private fun QrLifeApp() {
                     Button(onClick = { permissionLauncher.launch(Manifest.permission.CAMERA) }) {
                         Text("カメラを許可")
                     }
-                } else {
+                } else if (board == null) {
                     CameraScanner(
                         onImage = { bytes, width, height -> loadGray(width, height, bytes) },
                         onError = { error = it }
                     )
+                } else {
+                    Text("QRコードを読み込みました。リセットまたは画像選択で別の盤面を読み込めます。")
                 }
             }
             item {
