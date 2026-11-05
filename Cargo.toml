@@ -1,0 +1,18 @@
+[package]
+name = "qrlife"
+version = "0.1.0"
+edition = "2021"
+description = "Detect a QR code from an image and run Conway's Game of Life"
+license = "MIT"
+
+[dependencies]
+image = { version = "0.25", default-features = false, features = ["png", "jpeg", "gif", "bmp", "webp"] }
+rqrr = "0.8"
+
+[lib]
+name = "qrlife"
+path = "src/lib.rs"
+
+[[bin]]
+name = "qrlife"
+path = "src/main.rs"
